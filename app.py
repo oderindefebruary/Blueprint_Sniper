@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # --- 1. SYSTEM CONFIG & STYLING ---
 st.set_page_config(page_title="₦1M Blueprint | Command Center", layout="wide")
 
-# Hide Streamlit UI & Apply Institutional Dark Theme
+# Institutional Dark Theme & Metric Styling
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
@@ -24,12 +24,48 @@ HEADERS = {"x-apisports-key": API_KEY}
 INITIAL_FUNDS = 1000000.0
 STAKE_PCT = 5.0 
 
-# --- 2. ADMIN AUTHENTICATION ---
-# URL Access: yourwebsite.com/sniper?admin=true
+# --- 2. DATA ENGINES ---
+@st.cache_data(ttl=60)
+def get_football_data():
+    """Fetches global fixture data for the day."""
+    url = f"https://v3.football.api-sports.io/fixtures?date={datetime.now().strftime('%Y-%m-%d')}"
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=10).json()
+        return res.get("response", [])
+    except Exception:
+        return []
+
+def process_live_radar(fixtures):
+    """Filters data for the public 'Kill Zone' (0-0 high intensity)."""
+    if not fixtures:
+        return []
+    radar = []
+    for f in fixtures:
+        goals = (f.get('goals', {}).get('home') or 0) + (f.get('goals', {}).get('away') or 0)
+        status = f.get('fixture', {}).get('status', {}).get('short', '')
+        elapsed = f.get('fixture', {}).get('status', {}).get('elapsed') or 0
+        
+        # Only 0-0 matches currently in play or about to start
+        if goals == 0 and status in ["NS", "1H", "HT", "2H"]:
+            intensity = "🔥 HIGH"
+            if 30 <= elapsed <= 45: intensity = "⚡ EXTREME"
+            if 60 <= elapsed <= 80: intensity = "🚨 CRITICAL"
+            
+            radar.append({
+                "TIME": f"{elapsed}'" if status != "NS" else "READY", 
+                "FIXTURE": f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}", 
+                "INTENSITY": intensity
+            })
+    return radar
+
+# --- 3. FETCH GLOBAL DATA (SCOPE FIX) ---
+# This line MUST be outside any 'if' blocks so all users can see the radar.
+all_data = get_football_data()
+
+# --- 4. ADMIN & ANALYTICS ---
 query_params = st.query_params
 IS_ADMIN = query_params.get("admin") == "true"
 
-# --- 3. DATA PERSISTENCE & ANALYTICS ---
 if 'master_log' not in st.session_state:
     st.session_state.master_log = []
 
@@ -59,79 +95,35 @@ def calculate_advanced_metrics():
         })
     return pd.DataFrame(history), total_paid_out
 
-# --- 4. THE ENGINES (RADAR & MASTER LIST) ---
-@st.cache_data(ttl=60)
-def get_football_data():
-    url = f"https://v3.football.api-sports.io/fixtures?date={datetime.now().strftime('%Y-%m-%d')}"
-    try:
-        return requests.get(url, headers=HEADERS, timeout=10).json().get("response", [])
-    except: return []
-
-def process_live_radar(fixtures):
-    radar = []
-    for f in fixtures:
-        goals = (f['goals']['home'] or 0) + (f['goals']['away'] or 0)
-        status = f['fixture']['status']['short']
-        elapsed = f['fixture']['status']['elapsed'] or 0
-        if goals == 0 and status in ["NS", "1H", "HT", "2H"]:
-            intensity = "🔥 HIGH"
-            if 30 <= elapsed <= 45: intensity = "⚡ EXTREME"
-            if 60 <= elapsed <= 80: intensity = "🚨 CRITICAL"
-            radar.append({"TIME": f"{elapsed}'" if status != "NS" else "READY", 
-                         "FIXTURE": f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}", 
-                         "INTENSITY": intensity})
-    return radar
-
-# --- 5. UI COMPONENTS ---
-def get_payout_countdown():
-    now = datetime.now()
-    if now.month == 12: next_month = now.replace(year=now.year + 1, month=1, day=1)
-    else: next_month = now.replace(month=now.month + 1, day=1)
-    delta = next_month - now
-    return delta.days, delta.seconds // 3600
-
-# --- 6. RENDER DASHBOARD ---
-days, hours = get_payout_countdown()
-st.title("🛡️ ₦1M BLUEPRINT | INSTITUTIONAL COMMAND")
-st.info(f"⏳ **PROFIT DISTRIBUTION COUNTDOWN:** {days} Days and {hours} Hours remaining.")
-
-# Calculate Metrics
+# --- 5. RENDER HUD ---
 equity_df, total_extracted = calculate_advanced_metrics()
 curr_growth = equity_df['Growth'].iloc[-1]
 max_dd = equity_df['DD'].max()
-total_trades = len([x for x in st.session_state.master_log if x["RESULT"] != "PAYOUT"])
-dod_growth = curr_growth - (equity_df['Growth'].iloc[-3] if len(equity_df) > 3 else 0)
-mom_index = curr_growth / 30.0
+now = datetime.now()
+next_month = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+days_to_payout = (next_month - now).days
 
-# Performance HUD
+st.title("🛡️ ₦1M BLUEPRINT | COMMAND CENTER")
+st.info(f"⏳ **PROFIT DISTRIBUTION COUNTDOWN:** {days_to_payout} Days remaining until next Payout.")
+
 h1, h2, h3, h4 = st.columns(4)
 h1.metric("TOTAL ROI", f"{curr_growth:.2f}%")
 h2.metric("REALIZED PAYOUTS", f"₦{total_extracted:,.0f}")
-h3.metric("DoD VELOCITY", f"{dod_growth:+.2f}%")
+h3.metric("DoD VELOCITY", "+0.00%") # Placeholder for velocity calc
 h4.metric("MAX DRAWDOWN", f"{max_dd:.2f}%", delta_color="inverse")
 
-# Main Charts
-c_main, c_bar = st.columns([2, 1])
-with c_main:
-    fig_eq = px.area(equity_df, x="Trade", y="Growth", title="Growth Path (ROI %)", 
-                    color_discrete_sequence=["#00ff00"], hover_data=["Match"])
-    fig_eq.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-    st.plotly_chart(fig_eq, use_container_width=True)
+# Growth Chart
+fig_eq = px.area(equity_df, x="Trade", y="Growth", title="Growth Path (ROI %)", 
+                color_discrete_sequence=["#00ff00"], hover_data=["Match"])
+fig_eq.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+st.plotly_chart(fig_eq, use_container_width=True)
 
-with c_bar:
-    periodic = pd.DataFrame({"Period": ["Week 1", "Week 2", "Week 3", "Today"], "ROI": [14.2, 8.5, -4.1, curr_growth]})
-    fig_b = px.bar(periodic, x="Period", y="ROI", color="ROI", color_continuous_scale=['#ff4b4b', '#00ff00'], title="Consistency Index")
-    fig_b.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', showlegend=False)
-    st.plotly_chart(fig_b, use_container_width=True)
-
-# --- 7. ADMIN GOD-MODE (SECRET) ---
+# --- 6. ADMIN PANEL ---
 if IS_ADMIN:
     with st.expander("🔑 ADMIN MASTER CONTROL PANEL", expanded=True):
         t1, t2 = st.tabs(["Signal Verification", "Payroll Management"])
-        all_data = get_football_data()
-        
         with t1:
-            # Master list of ALL today's games for admin selection
+            # Master list of ALL today's games
             all_fixtures = [f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}" for f in all_data]
             target = st.selectbox("Select Target Match", options=sorted(all_fixtures) if all_fixtures else ["Manual Entry"])
             note = st.text_input("Trade Insight")
@@ -142,7 +134,6 @@ if IS_ADMIN:
             if b2.button("❌ LOG LOSS"):
                 st.session_state.master_log.insert(0, {"DATE": datetime.now().strftime("%Y-%m-%d"), "MATCH": target, "RESULT": "LOSS", "NOTE": note})
                 st.rerun()
-        
         with t2:
             p_amt = st.number_input("Payout Amount (₦)", min_value=0.0)
             if st.button("🚀 EXECUTE PAYROLL"):
@@ -150,22 +141,16 @@ if IS_ADMIN:
                 st.balloons()
                 st.rerun()
 
-# --- 8. RADAR & HISTORY ---
-live_data = process_live_radar(all_data)
+# --- 7. RADAR & LOG ---
+live_radar = process_live_radar(all_data)
 st.divider()
 r_col, l_col = st.columns(2)
 with r_col:
     st.subheader("📡 High-Intensity Radar (0-0 Stalking)")
-    if live_data: st.table(pd.DataFrame(live_data))
+    if live_radar: st.table(pd.DataFrame(live_radar))
     else: st.info("Scanning for Triple-Lock 0-0 targets...")
 
 with l_col:
     st.subheader("📜 Institutional Trade Log")
     if st.session_state.master_log: st.table(pd.DataFrame(st.session_state.master_log).head(10))
     else: st.info("No trades verified in this session.")
-
-# --- 9. MONTHLY STATEMENT ---
-with st.expander("📊 GENERATE OFFICIAL STATEMENT"):
-    st.markdown(f"### 🏛️ PIP RESOURCES STATEMENT: {datetime.now().strftime('%B %Y')}")
-    st.write(f"**Growth:** {curr_growth:.2f}% | **Payouts:** ₦{total_extracted:,.0f} | **Status:** Active")
-    st.caption("Right-click to print as PDF for your records.")
