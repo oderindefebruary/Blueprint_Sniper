@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 # --- 1. SYSTEM CONFIG ---
-st.set_page_config(page_title="₦1M Blueprint", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="🛡️ ₦1M Blueprint", layout="centered", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
@@ -13,39 +13,51 @@ st.markdown("""
     .stApp { background-color: #0e1117 !important; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     .stDeployButton {display:none;}
-    [data-testid="stMetricValue"] { font-size: 2rem !important; color: #00ff00 !important; text-align: center; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem !important; color: #00ff00 !important; text-align: center; }
     .block-container { padding: 1rem !important; }
+    .stTable { background-color: #0e1117 !important; border: 1px solid #333; }
     </style>
     """, unsafe_allow_html=True)
 
 # API & GLOBAL CONSTANTS
-API_KEY = st.secrets["API_KEY"]
-HEADERS = {"x-apisports-key": API_KEY}
+# Ensure these are set in Streamlit Cloud -> Settings -> Secrets
+try:
+    API_KEY = st.secrets["API_KEY"]
+except:
+    API_KEY = "MISSING"
+
+HEADERS = {"x-apisports-key": API_KEY, "Accept": "application/json"}
 INITIAL_FUNDS = 1000000.0
 STAKE_PCT = 5.0 
 
-# --- 2. SNIPER RADAR ENGINE (STRICT 0-0 FILTER) ---
-@st.cache_data(ttl=60)
+# --- 2. DATA ENGINES ---
+@st.cache_data(ttl=30) # Reduced TTL to catch live changes faster
 def get_football_data():
+    if API_KEY == "MISSING": return {"error": "API Key is not set in Secrets."}
+    
     url = f"https://v3.football.api-sports.io/fixtures?date={datetime.now().strftime('%Y-%m-%d')}"
     try:
-        res = requests.get(url, headers=HEADERS, timeout=10).json()
-        return res.get("response", [])
-    except: return []
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        data = response.json()
+        
+        # Check for API-level errors
+        if data.get("errors"):
+            return {"error": str(data["errors"])}
+        
+        return data.get("response", [])
+    except Exception as e:
+        return {"error": str(e)}
 
 def process_live_radar(fixtures):
-    if not fixtures: return []
+    if not isinstance(fixtures, list): return []
     radar = []
     for f in fixtures:
-        goals_home = f.get('goals', {}).get('home') or 0
-        goals_away = f.get('goals', {}).get('away') or 0
-        total_goals = goals_home + goals_away
-        
+        goals = (f.get('goals', {}).get('home') or 0) + (f.get('goals', {}).get('away') or 0)
         status = f.get('fixture', {}).get('status', {}).get('short', '')
         elapsed = f.get('fixture', {}).get('status', {}).get('elapsed') or 0
         
-        # SNIPER LOGIC: Only list if score is exactly 0-0
-        if total_goals == 0 and status in ["NS", "1H", "HT", "2H"]:
+        # SNIPER RULE: Only 0-0 and matches in progress or about to start
+        if goals == 0 and status in ["NS", "1H", "HT", "2H"]:
             intensity = "🔥 HIGH"
             if 30 <= elapsed <= 45: intensity = "⚡ EXTREME"
             if elapsed > 60: intensity = "🚨 CRITICAL"
@@ -53,16 +65,18 @@ def process_live_radar(fixtures):
             radar.append({
                 "TIME": f"{elapsed}'" if status != "NS" else "READY", 
                 "FIXTURE": f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}", 
-                "STATE": intensity
+                "INTENSITY": intensity
             })
     return radar
 
-# --- 3. GLOBAL FETCH & AUTH ---
-all_fixtures_raw = get_football_data()
+# --- 3. FETCH & AUTH ---
+raw_payload = get_football_data()
+all_fixtures = raw_payload if isinstance(raw_payload, list) else []
+
 IS_ADMIN = st.query_params.get("admin") == "true"
 if 'master_log' not in st.session_state: st.session_state.master_log = []
 
-# --- 4. PRECISION ANALYTICS ---
+# --- 4. ANALYTICS ---
 def calculate_metrics():
     balance = INITIAL_FUNDS
     ath = INITIAL_FUNDS
@@ -70,7 +84,7 @@ def calculate_metrics():
     history = [{"Trade": 0, "Balance": balance, "Growth": 0.0, "DD": 0.0, "Label": "Baseline"}]
     
     for i, entry in enumerate(reversed(st.session_state.master_log)):
-        label = entry.get("TITLE", "Trade")
+        label = entry.get("TITLE", "Trade Instance")
         asset = entry.get("ASSET", "⚽")
         
         if entry["RESULT"] == "PAYOUT":
@@ -97,63 +111,72 @@ def calculate_metrics():
         })
     return pd.DataFrame(history), total_paid_out
 
-# --- 5. UI RENDER ---
-eq_df, total_payouts = calculate_metrics()
+# --- 5. RENDER UI ---
+eq_df, total_extracted = calculate_metrics()
 curr_roi = eq_df['Growth'].iloc[-1]
-now = datetime.now()
 
-st.markdown(f"<h1 style='text-align: center; color: white;'>🛡️ ₦1M BLUEPRINT</h1>", unsafe_allow_html=True)
+st.markdown(f"<h1 style='text-align: center; color: white; margin-bottom: 0;'>🛡️ ₦1M BLUEPRINT</h1>", unsafe_allow_html=True)
+st.write(f"<p style='text-align: center; color: #888;'>Institutional Grade Sniper Console</p>", unsafe_allow_html=True)
 
+# Metrics HUD
 c1, c2, c3 = st.columns(3)
 c1.metric("TOTAL ROI", f"{curr_roi:.2f}%")
-c2.metric("PAYOUTS", f"₦{total_payouts:,.0f}")
+c2.metric("PAYOUTS", f"₦{total_extracted:,.0f}")
 c3.metric("CURRENT BAL", f"₦{eq_df['Balance'].iloc[-1]:,.0f}")
 
-fig = px.area(eq_df, x="Trade", y="Growth", title="Institutional Equity Path", 
+# Chart
+fig = px.area(eq_df, x="Trade", y="Growth", title="Equity Path", 
              color_discrete_sequence=["#00ff00"], hover_data=["Label"])
 fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=40, b=0))
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 6. ADMIN GOD MODE (ASSET + DESCRIPTION) ---
+# --- 6. ADMIN PANEL & DIAGNOSTICS ---
 if IS_ADMIN:
     with st.expander("🔑 ADMIN MASTER CONTROL", expanded=True):
-        t1, t2 = st.tabs(["Log Trade", "Log Payout"])
+        # API HEALTH CHECK
+        if isinstance(raw_payload, dict) and "error" in raw_payload:
+            st.error(f"📡 API CONNECTION ERROR: {raw_payload['error']}")
+        else:
+            st.success(f"📡 API LIVE: Found {len(all_fixtures)} global fixtures.")
+            
+        t1, t2 = st.tabs(["Log Instance", "Log Payout"])
         with t1:
-            col_1, col_2 = st.columns([1, 2])
-            asset_type = col_1.selectbox("Asset", ["⚽ Football", "🟡 Gold (XAU)"])
-            trade_title = col_2.text_input("Trade Title", placeholder="e.g., Domino-de-Dios Sniper")
+            col_a, col_b = st.columns([1, 2])
+            asset_ico = col_a.selectbox("Asset", ["⚽ Football", "🟡 Gold (XAU)"])
+            trade_title = col_b.text_input("Trade Description", placeholder="e.g. Elite 5 Sniper Entry")
             
-            all_names = [f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}" for f in all_fixtures_raw]
-            target = st.selectbox("Market Match (If Football)", options=sorted(all_names) if all_names else ["Manual Entry"])
+            match_names = [f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}" for f in all_fixtures]
+            target = st.selectbox("API Target", options=sorted(match_names) if match_names else ["Manual Entry"])
             
-            col_a, col_b = st.columns(2)
-            trade_odds = col_a.number_input("Odds", min_value=1.01, value=1.12, step=0.01)
-            result = col_b.selectbox("Outcome", ["WIN", "LOSS"])
+            c_odds, c_res = st.columns(2)
+            odds = c_odds.number_input("Odds", min_value=1.01, value=1.12, step=0.01)
+            res = c_res.selectbox("Result", ["WIN", "LOSS"])
             
-            if st.button("🚀 VERIFY & LOG"):
+            if st.button("🚀 EXECUTE LOG"):
                 st.session_state.master_log.insert(0, {
-                    "DATE": now.strftime("%Y-%m-%d"), 
-                    "ASSET": "⚽" if "Football" in asset_type else "🟡",
+                    "DATE": datetime.now().strftime("%Y-%m-%d"),
+                    "ASSET": "⚽" if "Football" in asset_ico else "🟡",
                     "TITLE": trade_title if trade_title else target,
-                    "RESULT": result, 
-                    "ODDS": trade_odds,
-                    "MATCH": target
+                    "RESULT": res, "ODDS": odds, "MATCH": target
                 })
                 st.rerun()
+        
         with t2:
-            p_title = st.text_input("Description", value="Monthly Profit Take")
-            amt = st.number_input("Amount (₦)", min_value=0.0)
-            if st.button("💸 RELEASE"):
-                st.session_state.master_log.insert(0, {"DATE": now.strftime("%Y-%m-%d"), "TITLE": p_title, "RESULT": "PAYOUT", "AMOUNT": amt})
+            p_amt = st.number_input("Payout (₦)", min_value=0.0)
+            if st.button("💸 RELEASE FUNDS"):
+                st.session_state.master_log.insert(0, {"DATE": datetime.now().strftime("%Y-%m-%d"), "TITLE": "Payout", "RESULT": "PAYOUT", "AMOUNT": p_amt})
                 st.balloons(); st.rerun()
 
-# --- 7. RADAR & LOG ---
-live_radar_data = process_live_radar(all_fixtures_raw)
+# --- 7. SNIPER RADAR ---
 st.divider()
-st.subheader("📡 Sniper Radar (Strict 0-0)")
-if live_radar_data: st.table(pd.DataFrame(live_radar_data))
-else: st.info("No high-intensity 0-0 seeds found. Scanning...")
+st.subheader("📡 Sniper Radar (Active 0-0)")
+live_radar = process_live_radar(all_fixtures)
+if live_radar:
+    st.table(pd.DataFrame(live_radar))
+else:
+    st.info("Searching for high-intensity seeds... (API Status: Online)")
 
-st.subheader("📜 Verified Instance Log")
+# --- 8. LOG TABLE ---
+st.subheader("📜 Instance History")
 if st.session_state.master_log:
-    st.table(pd.DataFrame(st.session_state.master_log)[["DATE", "TITLE", "RESULT", "ODDS"]].head(10))
+    st.table(pd.DataFrame(st.session_state.master_log)[["DATE", "TITLE", "RESULT", "ODDS"]].head(5))
