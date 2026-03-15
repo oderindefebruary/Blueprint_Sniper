@@ -5,16 +5,20 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 # --- 1. SYSTEM CONFIG & STYLING ---
-st.set_page_config(page_title="₦1M Blueprint | Command Center", layout="wide")
+# Layout changed to "centered" to prevent right-side cutoff in iframes
+st.set_page_config(page_title="₦1M Blueprint | Command Center", layout="centered")
 
-# Hide Streamlit UI & Apply Institutional Dark Theme
+# Institutional Dark Theme & Metric Styling
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     .stDeployButton {display:none;}
-    [data-testid="stMetricValue"] {font-size: 2.2rem !important; color: #00ff00 !important; font-family: 'Courier New', monospace;}
+    /* Adjusted font size for better fit in centered mode */
+    [data-testid="stMetricValue"] {font-size: 1.8rem !important; color: #00ff00 !important; font-family: 'Courier New', monospace;}
     .stTable {background-color: #0e1117 !important;}
     .stInfo {background-color: #001524 !important; border-left: 5px solid #00ff00 !important; color: white !important;}
+    /* Removes extra padding at the top of the app */
+    .block-container {padding-top: 2rem !important;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -27,7 +31,6 @@ STAKE_PCT = 5.0
 # --- 2. DATA ENGINES ---
 @st.cache_data(ttl=60)
 def get_football_data():
-    """Global fetch - runs for both Admin and User"""
     url = f"https://v3.football.api-sports.io/fixtures?date={datetime.now().strftime('%Y-%m-%d')}"
     try:
         res = requests.get(url, headers=HEADERS, timeout=10).json()
@@ -36,7 +39,6 @@ def get_football_data():
         return []
 
 def process_live_radar(fixtures):
-    """Filters fixtures for the 0-0 Kill Zone"""
     if not fixtures: return []
     radar = []
     for f in fixtures:
@@ -54,12 +56,10 @@ def process_live_radar(fixtures):
             })
     return radar
 
-# --- 3. GLOBAL DATA FETCH (CRITICAL FIX) ---
-# This variable must be defined outside any 'if' blocks
+# --- 3. GLOBAL DATA FETCH ---
 all_fixtures_raw = get_football_data()
 
 # --- 4. AUTHENTICATION & STATE ---
-# Admin access via: yoursite.com/sniper?admin=true
 IS_ADMIN = st.query_params.get("admin") == "true"
 
 if 'master_log' not in st.session_state:
@@ -104,14 +104,18 @@ curr_dd = eq_df['DD'].max()
 now = datetime.now()
 days_to_pay = ( (now.replace(day=28) + timedelta(days=4)).replace(day=1) - now ).days
 
-st.title("🛡️ ₦1M BLUEPRINT | COMMAND CENTER")
-st.info(f"⏳ **PROFIT DISTRIBUTION COUNTDOWN:** {days_to_pay} Days remaining.")
+st.title("🛡️ ₦1M BLUEPRINT")
+st.info(f"⏳ **PAYOUT COUNTDOWN:** {days_to_pay} Days remaining.")
 
-h1, h2, h3, h4 = st.columns(4)
-h1.metric("TOTAL ROI", f"{curr_roi:.2f}%")
-h2.metric("REALIZED PAYOUTS", f"₦{total_payouts:,.0f}")
-h3.metric("Do_D VELOCITY", f"{ (curr_roi - (eq_df['Growth'].iloc[-3] if len(eq_df) > 3 else 0) ):+.2f}%")
-h4.metric("MAX DRAWDOWN", f"{curr_dd:.2f}%", delta_color="inverse")
+# HUD - Using 2x2 for better mobile/iframe fit
+c1, c2 = st.columns(2)
+c1.metric("TOTAL ROI", f"{curr_roi:.2f}%")
+c2.metric("PAYOUTS", f"₦{total_payouts:,.0f}")
+
+c3, c4 = st.columns(2)
+velocity = (curr_roi - (eq_df['Growth'].iloc[-3] if len(eq_df) > 3 else 0))
+c3.metric("DoD VELOCITY", f"{velocity:+.2f}%")
+c4.metric("MAX DRAWDOWN", f"{curr_dd:.2f}%", delta_color="inverse")
 
 # Main Growth Chart
 fig = px.area(eq_df, x="Trade", y="Growth", title="Growth Path (ROI %)", 
@@ -144,18 +148,10 @@ if IS_ADMIN:
 # --- 8. RADAR & LOG ---
 live_radar_data = process_live_radar(all_fixtures_raw)
 st.divider()
-r_col, l_col = st.columns(2)
-with r_col:
-    st.subheader("📡 High-Intensity Radar (0-0 Stalking)")
-    if live_radar_data: st.table(pd.DataFrame(live_radar_data))
-    else: st.info("Scanning for Triple-Lock 0-0 targets...")
+st.subheader("📡 High-Intensity Radar")
+if live_radar_data: st.table(pd.DataFrame(live_radar_data))
+else: st.info("Scanning for 0-0 targets...")
 
-with l_col:
-    st.subheader("📜 Institutional Trade Log")
-    if st.session_state.master_log: st.table(pd.DataFrame(st.session_state.master_log).head(10))
-    else: st.info("No trades verified in this session.")
-
-with st.expander("📊 GENERATE OFFICIAL STATEMENT"):
-    st.markdown(f"### 🏛️ PIP RESOURCES STATEMENT: {now.strftime('%B %Y')}")
-    st.write(f"**Growth:** {curr_roi:.2f}% | **Payouts:** ₦{total_payouts:,.0f}")
-    st.caption("Press Ctrl+P to save as PDF.")
+st.subheader("📜 Institutional Trade Log")
+if st.session_state.master_log: st.table(pd.DataFrame(st.session_state.master_log).head(5))
+else: st.info("No trades verified in this session.")
