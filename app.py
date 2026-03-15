@@ -5,20 +5,31 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 # --- 1. SYSTEM CONFIG & STYLING ---
-# Layout changed to "centered" to prevent right-side cutoff in iframes
-st.set_page_config(page_title="₦1M Blueprint | Command Center", layout="centered")
+# We use 'centered' to keep everything in the safe zone of your WordPress page
+st.set_page_config(page_title="₦1M Blueprint", layout="centered", initial_sidebar_state="collapsed")
 
-# Institutional Dark Theme & Metric Styling
+# Professional Institutional Styling
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     .stDeployButton {display:none;}
-    /* Adjusted font size for better fit in centered mode */
-    [data-testid="stMetricValue"] {font-size: 1.8rem !important; color: #00ff00 !important; font-family: 'Courier New', monospace;}
+    
+    /* Center all metrics and adjust font for high-impact readability */
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem !important; 
+        color: #00ff00 !important; 
+        font-family: 'Courier New', monospace;
+    }
+    
+    /* Pull the app up to the top of the page */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 0rem !important;
+        max-width: 95% !important;
+    }
+
+    /* Table styling for the Radar */
     .stTable {background-color: #0e1117 !important;}
-    .stInfo {background-color: #001524 !important; border-left: 5px solid #00ff00 !important; color: white !important;}
-    /* Removes extra padding at the top of the app */
-    .block-container {padding-top: 2rem !important;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -35,8 +46,7 @@ def get_football_data():
     try:
         res = requests.get(url, headers=HEADERS, timeout=10).json()
         return res.get("response", [])
-    except:
-        return []
+    except: return []
 
 def process_live_radar(fixtures):
     if not fixtures: return []
@@ -56,21 +66,16 @@ def process_live_radar(fixtures):
             })
     return radar
 
-# --- 3. GLOBAL DATA FETCH ---
+# --- 3. FETCH DATA ---
 all_fixtures_raw = get_football_data()
 
-# --- 4. AUTHENTICATION & STATE ---
+# --- 4. AUTHENTICATION ---
 IS_ADMIN = st.query_params.get("admin") == "true"
 
 if 'master_log' not in st.session_state:
     st.session_state.master_log = []
 
-if IS_ADMIN:
-    st.sidebar.success("🛡️ ADMIN SESSION ACTIVE")
-else:
-    st.sidebar.info("📈 USER VIEW MODE")
-
-# --- 5. ANALYTICS CALCULATION ---
+# --- 5. ANALYTICS ---
 def calculate_metrics():
     balance = INITIAL_FUNDS
     ath = INITIAL_FUNDS
@@ -104,10 +109,11 @@ curr_dd = eq_df['DD'].max()
 now = datetime.now()
 days_to_pay = ( (now.replace(day=28) + timedelta(days=4)).replace(day=1) - now ).days
 
-st.title("🛡️ ₦1M BLUEPRINT")
+# Title & Status Bar
+st.markdown(f"<h1 style='text-align: center;'>🛡️ #1M BLUEPRINT</h1>", unsafe_allow_html=True)
 st.info(f"⏳ **PAYOUT COUNTDOWN:** {days_to_pay} Days remaining.")
 
-# HUD - Using 2x2 for better mobile/iframe fit
+# HUD - 2x2 Grid for Perfect Alignment
 c1, c2 = st.columns(2)
 c1.metric("TOTAL ROI", f"{curr_roi:.2f}%")
 c2.metric("PAYOUTS", f"₦{total_payouts:,.0f}")
@@ -117,20 +123,26 @@ velocity = (curr_roi - (eq_df['Growth'].iloc[-3] if len(eq_df) > 3 else 0))
 c3.metric("DoD VELOCITY", f"{velocity:+.2f}%")
 c4.metric("MAX DRAWDOWN", f"{curr_dd:.2f}%", delta_color="inverse")
 
-# Main Growth Chart
+# Main Growth Chart - Adjusted for Centered Layout
 fig = px.area(eq_df, x="Trade", y="Growth", title="Growth Path (ROI %)", 
              color_discrete_sequence=["#00ff00"], hover_data=["Match"])
-fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+fig.update_layout(
+    template="plotly_dark", 
+    plot_bgcolor='rgba(0,0,0,0)', 
+    paper_bgcolor='rgba(0,0,0,0)',
+    margin=dict(l=0, r=0, t=30, b=0)
+)
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 7. ADMIN PANEL (SECRET) ---
+# --- 7. ADMIN PANEL ---
 if IS_ADMIN:
+    st.sidebar.success("🛡️ ADMIN ACTIVE")
     with st.expander("🔑 ADMIN MASTER CONTROL PANEL", expanded=True):
-        t1, t2 = st.tabs(["Signal Verification", "Payroll Management"])
+        t1, t2 = st.tabs(["Signals", "Payroll"])
         with t1:
             all_names = [f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}" for f in all_fixtures_raw]
-            target = st.selectbox("Select Target Match", options=sorted(all_names) if all_names else ["Manual Entry"])
-            note = st.text_input("Trade Insight")
+            target = st.selectbox("Select Target", options=sorted(all_names) if all_names else ["Manual Entry"])
+            note = st.text_input("Insight")
             b1, b2 = st.columns(2)
             if b1.button("✅ LOG WIN"):
                 st.session_state.master_log.insert(0, {"DATE": now.strftime("%Y-%m-%d"), "MATCH": target, "RESULT": "WIN", "NOTE": note})
@@ -139,8 +151,8 @@ if IS_ADMIN:
                 st.session_state.master_log.insert(0, {"DATE": now.strftime("%Y-%m-%d"), "MATCH": target, "RESULT": "LOSS", "NOTE": note})
                 st.rerun()
         with t2:
-            amt = st.number_input("Payout Amount (₦)", min_value=0.0)
-            if st.button("🚀 EXECUTE PAYROLL"):
+            amt = st.number_input("Payout Amount", min_value=0.0)
+            if st.button("🚀 RELEASE"):
                 st.session_state.master_log.insert(0, {"DATE": now.strftime("%Y-%m-%d"), "MATCH": "PAYOUT", "RESULT": "PAYOUT", "AMOUNT": amt})
                 st.balloons()
                 st.rerun()
