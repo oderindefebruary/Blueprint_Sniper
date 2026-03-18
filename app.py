@@ -5,19 +5,18 @@ import gspread
 from datetime import datetime
 from google.oauth2 import service_account
 
-# --- 1. CONFIGURATION & STYLING ---
+# --- 1. CONFIGURATION & THEME ---
 st.set_page_config(page_title="TCSI Blueprint Terminal", layout="wide", page_icon="🛡️")
 
-# Custom CSS for that "Institutional" look
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #ffaa00; color: black; font-weight: bold; }
-    .stMetric { background-color: #1e2124; padding: 15px; border-radius: 10px; border: 1px solid #333; }
+    div[data-testid="stMetricValue"] { font-size: 2.5rem; color: #ffaa00; }
+    .stProgress > div > div > div > div { background-color: #00ff00; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. SECURE CONNECTIONS (GOOGLE SHEETS) ---
+# --- 2. DATABASE & API CONNECTIONS ---
 @st.cache_resource
 def init_connection():
     creds_dict = st.secrets["gcp_service_account"]
@@ -34,101 +33,143 @@ try:
     audit_sheet = sh.worksheet("Audit_Log")
     intel_sheet = sh.worksheet("Intelligence_Feed")
 except Exception as e:
-    st.error(f"Database Connection Failed: {e}")
+    st.error(f"⚠️ Connection Error: {e}")
     st.stop()
 
-# --- 3. DATA FETCHING (ODDS API) ---
-API_KEY = st.secrets["ODDS_API_KEY"]
-LEAGUE_KEYS = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_italy_serie_a", "soccer_france_ligue_1", "soccer_uefa_champs_league", "soccer_usa_mls"]
-
-@st.cache_data(ttl=600)
-def fetch_global_watchlist():
-    watchlist = []
-    for league in LEAGUE_KEYS:
-        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/?apiKey={API_KEY}&regions=uk&markets=totals&oddsFormat=decimal"
-        response = requests.get(url).json()
-        if isinstance(response, list):
-            for event in response:
-                # Filter for Over 1.5 logic
-                for bookie in event.get('bookmakers', []):
-                    if bookie['key'] == 'betfair_ex_uk': # Using Exchange for higher TVI accuracy
-                        for market in bookie['markets']:
-                            if market['key'] == 'totals':
-                                for outcome in market['outcomes']:
-                                    if outcome['name'] == 'Over' and outcome['point'] == 1.5:
-                                        watchlist.append({
-                                            "time": event['commence_time'],
-                                            "league": event['sport_title'],
-                                            "match": f"{event['home_team']} vs {event['away_team']}",
-                                            "odds": outcome['price']
-                                        })
-    return watchlist
-
-# --- 4. AUTHENTICATION ---
+# --- 3. CORE LOGIC & AUTH ---
 IS_ADMIN = st.query_params.get("admin") == "true"
 USER_RANK = st.query_params.get("rank", "Bronze")
 
-# --- 5. THE HEADER HUD ---
-# Read current TCSI from the last row of Audit Log
-audit_data = pd.DataFrame(audit_sheet.get_all_records())
-current_tcsi = float(audit_data['Impact'].iloc[-1]) if not audit_data.empty else 1.000
-daily_target = 0.010
-progress = min((current_tcsi - 1.0) / daily_target, 1.0)
+# Pull Master Data
+audit_all = audit_sheet.get_all_records()
+audit_df = pd.DataFrame(audit_all)
 
-col1, col2, col3 = st.columns([1, 2, 1])
-with col1:
-    st.metric("TCSI INDEX", f"{current_tcsi:.3f}", f"{(current_tcsi-1)*100:+.2f}%")
-with col2:
-    st.write("### Daily 1% Growth Progress")
-    st.progress(progress)
-with col3:
-    st.metric("SETTLEMENT RANK", USER_RANK, "Next: +10% Bonus")
+# Calculate Current Index (Institutional Base)
+if not audit_df.empty:
+    # Ensure Impact column is numeric
+    audit_df['Impact'] = pd.to_numeric(audit_df['Impact'], errors='coerce')
+    current_tcsi = audit_df['Impact'].iloc[-1]
+else:
+    current_tcsi = 1.000
+
+# --- 4. HEADER HUD ---
+col_idx, col_prog, col_rank = st.columns([1, 2, 1])
+
+with col_idx:
+    change = (current_tcsi - 1.000) * 100
+    st.metric("TCSI INDEX", f"{current_tcsi:.3f}", f"{change:+.2f}%")
+
+with col_prog:
+    daily_target = 0.010
+    current_growth = current_tcsi - 1.000
+    progress_val = min(max(current_growth / daily_target, 0.0), 1.0)
+    st.write(f"**Daily Target Progress (+{daily_target:.3f})**")
+    st.progress(progress_val)
+    if progress_val >= 1.0:
+        st.success("🎯 TARGET ACHIEVED - SESSION LOCKED")
+
+with col_rank:
+    st.metric("CURRENT RANK", USER_RANK)
+
+# --- 5. ADMIN SETTLEMENT PANEL (NEW) ---
+if IS_ADMIN:
+    st.divider()
+    st.subheader("🏁 Admin: Settlement Command")
+    
+    if not audit_df.empty:
+        active_trades = audit_df[audit_df['Status'] == 'ACTIVE']
+        
+        if not active_trades.empty:
+            for idx, row in active_trades.iterrows():
+                # Correct row index for gspread (1-based + header row)
+                gs_row = idx + 2 
+                
+                with st.expander(f"LIVE: {row['Match']} (@{row['Odds']})"):
+                    c1, c2 = st.columns(2)
+                    
+                    if c1.button(f"✅ LOG WIN (+0.004)", key=f"win_{idx}"):
+                        new_val = current_tcsi + 0.004
+                        audit_sheet.update_cell(gs_row, 5, "WIN")
+                        audit_sheet.update_cell(gs_row, 6, f"{new_val:.3f}")
+                        st.toast("Victory Logged!")
+                        st.rerun()
+                        
+                    if c2.button(f"❌ LOG LOSS (-0.010)", key=f"loss_{idx}"):
+                        new_val = current_tcsi - 0.010
+                        audit_sheet.update_cell(gs_row, 5, "LOSS")
+                        audit_sheet.update_cell(gs_row, 6, f"{new_val:.3f}")
+                        st.toast("Loss Registered.")
+                        st.rerun()
+        else:
+            st.info("No active trades awaiting settlement. Execute a seed below to begin.")
 
 # --- 6. LIVE INTELLIGENCE FEED (SIDEBAR) ---
-st.sidebar.subheader("🎙️ Live Intelligence")
+st.sidebar.title("🎙️ TCSI Intelligence")
 if IS_ADMIN:
-    new_intel = st.sidebar.text_area("Post Update")
-    if st.sidebar.button("Broadcast Update"):
-        intel_sheet.append_row([datetime.now().strftime("%H:%M"), new_intel, "High"])
+    msg = st.sidebar.text_area("Broadcast update to spectators:")
+    if st.sidebar.button("Post Update"):
+        intel_sheet.append_row([datetime.now().strftime("%H:%M"), msg, "Normal"])
         st.rerun()
 
-intel_data = pd.DataFrame(intel_sheet.get_all_records()).tail(5).iloc[::-1]
-for _, row in intel_data.iterrows():
+intel_all = pd.DataFrame(intel_sheet.get_all_records()).tail(10).iloc[::-1]
+for _, row in intel_all.iterrows():
     st.sidebar.markdown(f"**[{row['Timestamp']}]** {row['Update']}")
     st.sidebar.divider()
 
-# --- 7. GLOBAL WATCHLIST & EXECUTION ---
+# --- 7. WATCHLIST ENGINE ---
 st.header("📡 Global Sniper Watchlist")
-watchlist = fetch_global_watchlist()
+
+@st.cache_data(ttl=300)
+def get_live_odds():
+    API_KEY = st.secrets["ODDS_API_KEY"]
+    # Scanning major global leagues
+    leagues = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_uefa_champs_league", "soccer_italy_serie_a"]
+    all_data = []
+    
+    for l in leagues:
+        url = f"https://api.the-odds-api.com/v4/sports/{l}/odds/?apiKey={API_KEY}&regions=uk&markets=totals&oddsFormat=decimal"
+        res = requests.get(url).json()
+        if isinstance(res, list):
+            for event in res:
+                for bookie in event.get('bookmakers', []):
+                    if bookie['key'] == 'betfair_ex_uk': # Using Betfair Exchange for TVI accuracy
+                        for mkt in bookie['markets']:
+                            for out in mkt['outcomes']:
+                                if out['name'] == 'Over' and out['point'] == 1.5:
+                                    all_data.append({
+                                        "time": event['commence_time'],
+                                        "league": event['sport_title'],
+                                        "match": f"{event['home_team']} vs {event['away_team']}",
+                                        "odds": out['price']
+                                    })
+    return all_data
+
+watchlist = get_live_odds()
 
 if watchlist:
     df_watch = pd.DataFrame(watchlist)
-    # Filter by user preference
-    selected_leagues = st.multiselect("Filter Markets", df_watch['league'].unique(), default=df_watch['league'].unique())
-    filtered_df = df_watch[df_watch['league'].isin(selected_leagues)]
-
-    for _, row in filtered_df.iterrows():
+    for _, row in df_watch.iterrows():
         with st.container():
-            c1, c2, c3, c4 = st.columns([1, 3, 1, 1])
-            c1.caption(row['time'][11:16])
-            c2.write(f"**{row['match']}**")
-            c3.info(f"O1.5 @ {row['odds']}")
+            col_t, col_m, col_o, col_a = st.columns([1, 3, 1, 1])
+            col_t.caption(row['time'][11:16])
+            col_m.write(f"**{row['match']}** ({row['league']})")
+            col_o.info(f"O1.5 @ {row['odds']}")
             
             if IS_ADMIN:
-                if c4.button("EXECUTE", key=row['match']):
-                    # Log the trade to the Google Sheet
-                    new_impact = current_tcsi + 0.004 # Sample winning impact
-                    audit_sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), row['league'], row['match'], row['odds'], "ACTIVE", new_impact])
-                    st.success("Trade Executed to Master Ledger")
+                if col_a.button("EXECUTE", key=f"ex_{row['match']}"):
+                    audit_sheet.append_row([
+                        datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        row['league'], row['match'], row['odds'], "ACTIVE", f"{current_tcsi:.3f}"
+                    ])
+                    st.toast("Asset Deployed!")
                     st.rerun()
             else:
-                c4.write("👁️ SPECTATING")
+                col_a.write("👁️ SPECTATING")
 else:
-    st.warning("No active Over 1.5 seeds found in the current scan.")
+    st.warning("No active Over 1.5 seeds currently meet institutional criteria.")
 
-# --- 8. THE TVI HEATMAP ---
+# --- 8. TVI HEATMAP ---
 st.divider()
 st.subheader("📊 Volatility Index (TVI)")
 if watchlist:
-    tvi_counts = df_watch['league'].value_counts(normalize=True)
-    st.bar_chart(tvi_counts)
+    st.bar_chart(pd.DataFrame(watchlist)['league'].value_counts())
