@@ -8,20 +8,20 @@ import pytz
 # --- 1. CONFIG & SETTINGS ---
 st.set_page_config(page_title="Tonoos Stream XVI", page_icon="🤝", layout="centered")
 EST = pytz.timezone('US/Eastern')
-# UPDATED: Matches your exact Google Sheet tab name
 TAB_NAME = "Tonoos_StreamXVI_Ledger" 
 PAYOUT_GOAL = 4400.0
 
-# --- 2. AUTHENTICATION ---
+# --- 2. EASY ACCESS LOGIN (1234) ---
 if "authenticated" not in st.session_state:
-    st.title("🔐 Tonoos Member Portal")
-    access_code = st.text_input("Enter Group Access Code", type="password")
+    st.title("🤝 Tonoos Stream XVI")
+    st.subheader("Member Access")
+    access_code = st.text_input("Enter Access Code (e.g. 1234)", type="password")
     if st.button("Access Ledger"):
         if access_code == st.secrets["credentials"]["GROUP_ACCESS_CODE"]:
             st.session_state["authenticated"] = True
             st.rerun()
         else:
-            st.error("Invalid Access Code. Please check the WhatsApp group.")
+            st.error("Invalid Code. Please try again.")
     st.stop()
 
 # --- 3. INITIALIZE CONNECTION ---
@@ -43,13 +43,11 @@ def get_whatsapp_link(member, amount, cycle, total, goal, recipient):
     return f"https://wa.me/?text={urllib.parse.quote(text)}"
 
 # --- 5. DATA LOADING ---
-# fresh copy every time to ensure admin updates show up instantly
 df = conn.read(worksheet=TAB_NAME, ttl=0)
 
 # --- 6. HEADER & NAVIGATION ---
 st.title("🤝 Tonoos Stream XVI")
 
-# 11-Cycle Recipient Mapping
 recipients = {
     "Cycle 1": "Oke 2", "Cycle 2": "Rotimi", "Cycle 3": "Mr Ayo",
     "Cycle 4": "Alhaji Taiwo/Cleopatra", "Cycle 5": "Sonia", "Cycle 6": "Adenike",
@@ -60,29 +58,23 @@ recipients = {
 st.sidebar.header("Navigation")
 active_cycle = st.sidebar.selectbox("Select Active Cycle", list(recipients.keys()))
 current_recipient = recipients[active_cycle]
-
-is_admin = st.sidebar.checkbox("Admin: Confirm Receipts")
+is_admin = st.sidebar.checkbox("Admin Mode")
 
 # --- 7. PROGRESS SECTION ---
-# Convert to numeric to avoid errors if the sheet has empty strings
 total_collected = pd.to_numeric(df[active_cycle], errors='coerce').fillna(0).sum()
-st.subheader(f"Target: ${PAYOUT_GOAL:,.2f} for {current_recipient}")
+st.subheader(f"Cycle Payout: ${PAYOUT_GOAL:,.2f} for {current_recipient}")
 st.metric("Total Collected", f"${total_collected:,.2f}", f"{int((total_collected/PAYOUT_GOAL)*100)}%")
 st.progress(min(total_collected / PAYOUT_GOAL, 1.0))
 
 # --- 8. MEMBER LIST & ADMIN CONTROLS ---
 st.write("---")
-st.write(f"### {active_cycle} Contributions")
-
 for index, row in df.iterrows():
     member = row['Member Name']
     paid = pd.to_numeric(row[active_cycle], errors='coerce') if pd.notnull(row[active_cycle]) else 0
     partner = row['Partner']
-    
     display_name = f"{member} & {partner}" if pd.notna(partner) and str(partner).strip() != "" else member
     
     col1, col2 = st.columns([3, 2])
-    
     with col1:
         status_emoji = "✅" if paid >= 400 else "⏳"
         st.write(f"{status_emoji} **{display_name}**: ${paid:,.0f}")
@@ -93,17 +85,12 @@ for index, row in df.iterrows():
             if c1.button(f"+$200", key=f"btn2_{index}"):
                 df.loc[index, active_cycle] = paid + 200
                 conn.update(worksheet=TAB_NAME, data=df)
-                st.success(f"Added $200 for {member}")
-                # WhatsApp uses updated total
-                st.markdown(f"[📲 WhatsApp Update]({get_whatsapp_link(member, 200, active_cycle, total_collected + 200, PAYOUT_GOAL, current_recipient)})")
-            
+                st.success(f"Added $200")
+                st.markdown(f"[📲 WhatsApp]({get_whatsapp_link(member, 200, active_cycle, total_collected + 200, PAYOUT_GOAL, current_recipient)})")
             if c2.button(f"+$400", key=f"btn4_{index}"):
                 df.loc[index, active_cycle] = 400
                 conn.update(worksheet=TAB_NAME, data=df)
-                st.success(f"Full Hand for {member}")
-                new_total = total_collected + (400 - paid)
-                st.markdown(f"[📲 WhatsApp Update]({get_whatsapp_link(member, 400, active_cycle, new_total, PAYOUT_GOAL, current_recipient)})")
+                st.success(f"Added $400")
+                st.markdown(f"[📲 WhatsApp]({get_whatsapp_link(member, 400, active_cycle, total_collected + (400-paid), PAYOUT_GOAL, current_recipient)})")
 
-# Sidebar Info
-st.sidebar.write("---")
 st.sidebar.info("Deadline: Fridays 7PM EST\n\nGrace Period: Sundays 7PM EST")
