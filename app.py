@@ -8,14 +8,16 @@ import pytz
 # --- 1. CONFIG & SETTINGS ---
 st.set_page_config(page_title="Tonoos Stream XVI", page_icon="🤝", layout="centered")
 EST = pytz.timezone('US/Eastern')
-TAB_NAME = "Tonoos_StreamXVI_Ledger" 
+
+# UPDATED: Matches your Google Sheet tab name exactly
+TAB_NAME = "Audit_Log" 
 PAYOUT_GOAL = 4400.0
 
 # --- 2. EASY ACCESS LOGIN (1234) ---
 if "authenticated" not in st.session_state:
     st.title("🤝 Tonoos Stream XVI")
     st.subheader("Member Access")
-    access_code = st.text_input("Enter Access Code (e.g. 1234)", type="password")
+    access_code = st.text_input("Enter Access Code", type="password")
     if st.button("Access Ledger"):
         if access_code == st.secrets["credentials"]["GROUP_ACCESS_CODE"]:
             st.session_state["authenticated"] = True
@@ -43,11 +45,13 @@ def get_whatsapp_link(member, amount, cycle, total, goal, recipient):
     return f"https://wa.me/?text={urllib.parse.quote(text)}"
 
 # --- 5. DATA LOADING ---
+# Load from Audit_Log tab with no caching (ttl=0)
 df = conn.read(worksheet=TAB_NAME, ttl=0)
 
 # --- 6. HEADER & NAVIGATION ---
 st.title("🤝 Tonoos Stream XVI")
 
+# 11-Cycle Recipient Mapping
 recipients = {
     "Cycle 1": "Oke 2", "Cycle 2": "Rotimi", "Cycle 3": "Mr Ayo",
     "Cycle 4": "Alhaji Taiwo/Cleopatra", "Cycle 5": "Sonia", "Cycle 6": "Adenike",
@@ -72,6 +76,7 @@ for index, row in df.iterrows():
     member = row['Member Name']
     paid = pd.to_numeric(row[active_cycle], errors='coerce') if pd.notnull(row[active_cycle]) else 0
     partner = row['Partner']
+    
     display_name = f"{member} & {partner}" if pd.notna(partner) and str(partner).strip() != "" else member
     
     col1, col2 = st.columns([3, 2])
@@ -87,10 +92,12 @@ for index, row in df.iterrows():
                 conn.update(worksheet=TAB_NAME, data=df)
                 st.success(f"Added $200")
                 st.markdown(f"[📲 WhatsApp]({get_whatsapp_link(member, 200, active_cycle, total_collected + 200, PAYOUT_GOAL, current_recipient)})")
+            
             if c2.button(f"+$400", key=f"btn4_{index}"):
                 df.loc[index, active_cycle] = 400
                 conn.update(worksheet=TAB_NAME, data=df)
                 st.success(f"Added $400")
                 st.markdown(f"[📲 WhatsApp]({get_whatsapp_link(member, 400, active_cycle, total_collected + (400-paid), PAYOUT_GOAL, current_recipient)})")
 
+# Sidebar Info
 st.sidebar.info("Deadline: Fridays 7PM EST\n\nGrace Period: Sundays 7PM EST")
