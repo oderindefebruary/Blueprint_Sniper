@@ -1,6 +1,2 @@
-streamlit
+st-gsheets-connection
 pandas
-gspread
-google-auth
-requests
-streamlit-autorefresh
