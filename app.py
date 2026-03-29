@@ -2,86 +2,83 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import urllib.parse
-from datetime import datetime
-import pytz
 
-# --- 1. CONFIG & SETTINGS ---
+# --- 1. CONFIG ---
 st.set_page_config(page_title="Tonoos Stream XVI", page_icon="🤝", layout="centered")
-EST = pytz.timezone('US/Eastern')
 TAB_NAME = "Audit_Log" 
 PAYOUT_GOAL = 4400.0
 
-# --- 2. EASY ACCESS LOGIN (1234) ---
+# --- 2. LOGIN ---
 if "authenticated" not in st.session_state:
     st.title("🤝 Tonoos Stream XVI")
-    st.subheader("Member Access")
-    access_code = st.text_input("Enter Access Code (e.g. 1234)", type="password")
+    access_code = st.text_input("Enter Access Code", type="password")
     if st.button("Access Ledger"):
         if access_code == st.secrets["credentials"]["GROUP_ACCESS_CODE"]:
             st.session_state["authenticated"] = True
             st.rerun()
         else:
-            st.error("Invalid Code. Please try again.")
+            st.error("Invalid Code.")
     st.stop()
 
-# --- 3. INITIALIZE CONNECTION ---
+# --- 3. CONNECTION & DATA ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-
-# --- 4. HELPER FUNCTIONS ---
-def get_whatsapp_link(member, amount, cycle, total, goal, recipient):
-    percent = int((total / goal) * 100)
-    text = (
-        f"✅ *Tonoos Stream XVI Update*\n\n"
-        f"*Cycle:* {cycle}\n"
-        f"*Recipient:* {recipient}\n"
-        f"--------------------------\n"
-        f"*Member:* {member}\n"
-        f"*Confirmed:* ${amount}\n"
-        f"*Current Pot:* ${total:,.2f} / ${goal:,.2f} ({percent}%)\n\n"
-        f"🔗 View Ledger: {st.secrets['credentials']['APP_URL']}"
-    )
-    return f"https://wa.me/?text={urllib.parse.quote(text)}"
-
-# --- 5. DATA LOADING ---
 df = conn.read(worksheet=TAB_NAME, ttl=0)
 
-# --- 6. HEADER & NAVIGATION ---
-st.title("🤝 Tonoos Stream XVI")
-
-# Corrected 11-Cycle Recipient Mapping from your screenshot
+# --- 4. THE OFFICIAL 11-CYCLE SCHEDULE ---
+# This dictionary now perfectly matches your calendar screenshot
 recipients = {
     "Cycle 1": "Oke 2", 
     "Cycle 2": "Rotimi", 
     "Cycle 3": "Mr Ayo",
-    "Cycle 4": "Alhaji Taiwo/Cleopatra", 
+    "Cycle 4": "Alhaji Taiwo & Cleopatra", 
     "Cycle 5": "Sonia", 
     "Cycle 6": "Adenike",
     "Cycle 7": "Akinkunle", 
     "Cycle 8": "Mr Adeniji", 
     "Cycle 9": "Oke 1",
-    "Cycle 10": "Perfect/Mmandu", 
+    "Cycle 10": "Perfect & Mmandu", 
     "Cycle 11": "Jibola"
 }
 
+# --- 5. NAVIGATION ---
 st.sidebar.header("Navigation")
 active_cycle = st.sidebar.selectbox("Select Active Cycle", list(recipients.keys()))
 current_recipient = recipients[active_cycle]
 is_admin = st.sidebar.checkbox("Admin Mode")
 
-# --- 7. PROGRESS SECTION ---
+# --- 6. PROGRESS ---
 total_collected = pd.to_numeric(df[active_cycle], errors='coerce').fillna(0).sum()
+st.title("🤝 Tonoos Stream XVI")
 st.subheader(f"Cycle Payout: ${PAYOUT_GOAL:,.2f} for {current_recipient}")
 st.metric("Total Collected", f"${total_collected:,.2f}", f"{int((total_collected/PAYOUT_GOAL)*100)}%")
 st.progress(min(total_collected / PAYOUT_GOAL, 1.0))
 
-# --- 8. MEMBER LIST & ADMIN CONTROLS ---
+# --- 7. MAIN LIST (Corrected to filter out Petagaye) ---
 st.write("---")
+st.write(f"### {active_cycle} Status")
+
+# We only loop through the members that should exist in the 11-cycle run
 for index, row in df.iterrows():
-    member = row['Member Name']
-    paid = pd.to_numeric(row[active_cycle], errors='coerce') if pd.notnull(row[active_cycle]) else 0
-    partner = row['Partner']
-    display_name = f"{member} & {partner}" if pd.notna(partner) and str(partner).strip() != "" else member
+    member = str(row['Member Name']).strip()
+    partner = str(row['Partner']).strip() if pd.notna(row['Partner']) else ""
     
+    # SKIP Petagaye to align with your corrected schedule
+    if member == "Petagaye":
+        continue
+        
+    # Formatting display names based on your schedule screenshot
+    if member == "Alhaji Taiwo": display_name = "Alhaji Taiwo & Cleopatra"
+    elif member == "Perfect": display_name = "Perfect & Mmandu"
+    elif partner and partner.lower() != "nan" and partner != "":
+        display_name = f"{member} & {partner}"
+    else:
+        display_name = member
+
+    try:
+        paid = float(row[active_cycle]) if pd.notna(row[active_cycle]) else 0.0
+    except:
+        paid = 0.0
+
     col1, col2 = st.columns([3, 2])
     with col1:
         status_emoji = "✅" if paid >= 400 else "⏳"
@@ -90,25 +87,17 @@ for index, row in df.iterrows():
     if is_admin and paid < 400:
         with col2:
             c1, c2 = st.columns(2)
-            if c1.button(f"+$200", key=f"btn2_{index}"):
-                df.loc[index, active_cycle] = paid + 200
+            if c1.button(f"+$200", key=f"p200_{index}"):
+                df.at[index, active_cycle] = paid + 200
                 conn.update(worksheet=TAB_NAME, data=df)
-                st.success(f"Added $200")
-                st.markdown(f"[📲 WhatsApp]({get_whatsapp_link(member, 200, active_cycle, total_collected + 200, PAYOUT_GOAL, current_recipient)})")
-            if c2.button(f"+$400", key=f"btn4_{index}"):
-                df.loc[index, active_cycle] = 400
+                st.rerun()
+            if c2.button(f"+$400", key=f"p400_{index}"):
+                df.at[index, active_cycle] = 400
                 conn.update(worksheet=TAB_NAME, data=df)
-                st.success(f"Added $400")
-                st.markdown(f"[📲 WhatsApp]({get_whatsapp_link(member, 400, active_cycle, total_collected + (400-paid), PAYOUT_GOAL, current_recipient)})")
+                st.rerun()
 
-# --- 9. SIDEBAR SCHEDULE ---
+# --- 8. SIDEBAR SCHEDULE ---
 st.sidebar.write("---")
 st.sidebar.write("📅 **Full Payout Schedule**")
-schedule = [
-    ("Apr 03", "Oke 2"), ("Apr 17", "Rotimi"), ("May 01", "Mr Ayo"),
-    ("May 15", "Alhaji/Cleo"), ("May 29", "Sonia"), ("Jun 12", "Adenike"),
-    ("Jun 26", "Akinkunle"), ("Jul 10", "Mr Adeniji"), ("Jul 24", "Oke 1"),
-    ("Aug 07", "Perfect/Mmandu"), ("Aug 21", "Jibola")
-]
-for date, name in schedule:
-    st.sidebar.text(f"{date}: {name}")
+for cycle, name in recipients.items():
+    st.sidebar.text(f"{cycle}: {name}")
