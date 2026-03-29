@@ -2,15 +2,18 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import urllib.parse
+from datetime import datetime, timedelta
+import pytz
 
-# --- 1. INITIALIZE CONNECTION ---
-# Ensure your Streamlit Secrets has the [connections.gsheets] block
+# --- 1. SETUP ---
+st.set_page_config(page_title="Tonoos Stream XVI", page_icon="🤝")
+EST = pytz.timezone('US/Eastern')
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def get_whatsapp_link(member, amount, cycle, total, goal):
     percent = int((total / goal) * 100)
     text = (
-        f"✅ *TCSI Stream XVI Update*\n\n"
+        f"✅ *Tonoos Stream XVI Update*\n\n"
         f"Member: {member}\n"
         f"Confirmed: ${amount}\n"
         f"Current {cycle} Pot: ${total:,.2f} / ${goal:,.2f} ({percent}%)\n\n"
@@ -18,23 +21,24 @@ def get_whatsapp_link(member, amount, cycle, total, goal):
     )
     return f"https://wa.me/?text={urllib.parse.quote(text)}"
 
-# --- 2. THE INTERFACE ---
-st.title("🤝 TCSI Stream XVI Ledger")
+# --- 2. HEADER ---
+st.title("🤝 Tonoos Stream XVI")
 
-# Load Data (Fresh copy every time)
+# --- 3. LOAD DATA ---
 df = conn.read(ttl=0)
 
 # Sidebar Config
 st.sidebar.header("Navigation")
-active_cycle = st.sidebar.selectbox("Select Active Cycle", [f"Cycle {i}" for i in range(1, 13)])
+# Updated to 11 Cycles
+active_cycle = st.sidebar.selectbox("Select Active Cycle", [f"Cycle {i}" for i in range(1, 12)])
 is_admin = st.sidebar.checkbox("Admin: Confirm Receipts")
 
-# --- 3. TOP LEVEL METRICS ---
+# --- 4. TOP LEVEL METRICS ---
 total_collected = df[active_cycle].sum()
 st.metric(f"Total Collected: {active_cycle}", f"${total_collected:,.2f}")
 st.progress(min(total_collected / 4400.0, 1.0))
 
-# --- 4. MEMBER LIST ---
+# --- 5. MEMBER LIST ---
 st.write("---")
 for index, row in df.iterrows():
     member = row['Member Name']
@@ -53,14 +57,14 @@ for index, row in df.iterrows():
     if is_admin and paid < 400:
         with col2:
             c1, c2 = st.columns(2)
-            if c1.button(f"+$200", key=f"2_{index}"):
+            if c1.button(f"+$200", key=f"btn2_{index}"):
                 df.loc[index, active_cycle] = paid + 200
                 conn.update(worksheet="Sheet1", data=df)
-                st.success(f"Added $200 to {member}")
-                st.markdown(f"[📲 Send WhatsApp Update]({get_whatsapp_link(member, 200, active_cycle, total_collected + 200, 4400.0)})")
+                st.success(f"Added $200 for {member}")
+                st.markdown(f"[📲 WhatsApp Update]({get_whatsapp_link(member, 200, active_cycle, total_collected + 200, 4400.0)})")
             
-            if c2.button(f"+$400", key=f"4_{index}"):
+            if c2.button(f"+$400", key=f"btn4_{index}"):
                 df.loc[index, active_cycle] = 400
                 conn.update(worksheet="Sheet1", data=df)
-                st.success(f"Hand Completed for {member}")
-                st.markdown(f"[📲 Send WhatsApp Update]({get_whatsapp_link(member, 400, active_cycle, total_collected + (400-paid), 4400.0)})")
+                st.success(f"Full Hand for {member}")
+                st.markdown(f"[📲 WhatsApp Update]({get_whatsapp_link(member, 400, active_cycle, total_collected + (400-paid), 4400.0)})")
